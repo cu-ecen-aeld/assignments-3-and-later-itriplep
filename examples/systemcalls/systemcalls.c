@@ -1,4 +1,14 @@
 #include "systemcalls.h"
+#include <stdlib.h>
+#include <syslog.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <bits/waitflags.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <errno.h>
+
+extern int errno;
 
 /**
  * @param cmd the command to execute with system()
@@ -9,15 +19,19 @@
 */
 bool do_system(const char *cmd)
 {
+    int checkSystem;
 
-/*
- * TODO  add your code here
- *  Call the system() function with the command set in the cmd
- *   and return a boolean true if the system() call completed with success
- *   or false() if it returned a failure
-*/
+    openlog("assignment-3-do_system", LOG_PID | LOG_CONS , LOG_USER);
+    
+    syslog(LOG_DEBUG , "System command are runnig");
+    checkSystem = system(cmd);
 
-    return true;
+    if (checkSystem == -1){
+        syslog(LOG_ERR, "Syslog doesn't run successfully");
+        return false;
+    }else{
+        return true;
+    }
 }
 
 /**
@@ -33,7 +47,6 @@ bool do_system(const char *cmd)
 *   fork, waitpid, or execv() command, or if a non-zero return value was returned
 *   by the command issued in @param arguments with the specified arguments.
 */
-
 bool do_exec(int count, ...)
 {
     va_list args;
@@ -49,15 +62,39 @@ bool do_exec(int count, ...)
     // and may be removed
     command[count] = command[count];
 
-/*
- * TODO:
- *   Execute a system command by calling fork, execv(),
- *   and wait instead of system (see LSP page 161).
- *   Use the command[0] as the full path to the command to execute
- *   (first argument to execv), and use the remaining arguments
- *   as second argument to the execv() command.
- *
-*/
+    openlog("assignment-3-do_exec", LOG_PID | LOG_CONS, LOG_USER);
+
+    syslog(LOG_DEBUG, "Create fork from the parent process.");
+    pid_t child_pid;
+    child_pid = fork();
+
+    if(child_pid == -1){
+        syslog( LOG_ERR, "Fork didn't create!(errno is %d)", errno);
+        va_end(args);
+        return false;
+
+    }else if (child_pid == 0){
+        execv(command[0],command);
+            //syslog( LOG_ERR, "Execv Error!(errno is %d)", errno);
+            exit(-1); 
+            va_end(args);
+            return false;
+    }
+    
+    int status;
+    if( waitpid(child_pid,&status,0) == -1){
+        va_end(args);
+        return false;
+    }else{
+        if( WIFEXITED(status) ){
+            int exit_status = WEXITSTATUS(status);
+            va_end(args);
+            return ( exit_status == 0 ? true : false);
+        }else{
+            va_end(args);
+            return false;
+        }
+    }
 
     va_end(args);
 
@@ -82,8 +119,47 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
     command[count] = NULL;
     // this line is to avoid a compile warning before your implementation is complete
     // and may be removed
-    command[count] = command[count];
+    // command[count] = command[count];
 
+    openlog("assignment-3-do_exec_redirect", LOG_CONS | LOG_PID, LOG_USER);
+
+    syslog( LOG_DEBUG, "Create for from the parent process.");
+    pid_t child_pid;
+
+    int fd = open (outputfile, O_WRONLY | O_TRUNC | O_CREAT , 0644);
+
+    if (fd < 0) { 
+        syslog(LOG_ERR, "The file didn't open!(errno: %d)", errno);
+        va_end(args);
+        return false; 
+    }
+
+    switch (child_pid = fork()) {
+        case -1: 
+            syslog(LOG_ERR, "The fork didn't create!(errno: %d)",errno);
+            va_end(args);
+            close(fd);
+            return false;
+
+        case 0:
+            if (dup2(fd, 1) < 0) { 
+                syslog(LOG_ERR, "It can not redirect to the file!(errno: %d)", errno);
+                va_end(args);
+                close(fd);
+                return false;
+            }
+
+            close(fd);
+            execv(command[0], command); 
+            perror("execvp");
+            va_end(args);
+            return false;
+            
+        default:
+            close(fd); 
+            int status;
+            waitpid(child_pid,&status,0);
+    }
 
 /*
  * TODO
